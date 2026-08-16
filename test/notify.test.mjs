@@ -153,7 +153,12 @@ describe("decideNotify", () => {
 function makeHarness() {
   const handlers = {};
   const routes = [];
+  const intervals = [];
+  const agentsList = [];
   const ctx = {
+    agents: { list: () => agentsList },
+    timer: { interval: (fn, ms) => { intervals.push({ fn, ms }); return () => {}; } },
+    effect: (fn) => { fn(); return () => {}; },
     on: (name, fn) => { handlers[name] = fn; },
     inject: (deps, cb) => { cb(webCtx); },
   };
@@ -162,7 +167,7 @@ function makeHarness() {
     webServer: { register: (r) => { routes.push(r); return () => {}; } },
   };
   notify.apply(ctx, {});
-  return { handlers, routes };
+  return { handlers, routes, intervals, agentsList };
 }
 
 function fireEvent(handlers, type, data, extra = {}) {
@@ -172,7 +177,23 @@ function fireEvent(handlers, type, data, extra = {}) {
   return { session, event };
 }
 
-describe("apply() event wiring", () => {
+/** A minimal fake agent with the phase shape DSH exposes. */
+function fakeAgent(id, phase) {
+  return { id, session: { id, events: [{ type: "session/title", data: { title: "My Session" } }] }, phase };
+}
+/** Fake agents service: { list: () => [...] }. */
+function fakeAgentsService(list) {
+  return { list: () => list };
+}
+
+describe("apply() wiring", () => {
+  test("phase poll interval is registered", () => {
+    const { intervals } = makeHarness();
+    assert.equal(intervals.length, 1);
+    assert.equal(intervals[0].ms, 1000);
+    cleanup();
+  });
+
   test("agent/error notifies immediately with SoundType error", () => {
     const { handlers } = makeHarness();
     const calls = [];
@@ -184,27 +205,32 @@ describe("apply() event wiring", () => {
     cleanup();
   });
 
-  test("assistant/message notifies after the 800ms debounce", async () => {
-    const { handlers } = makeHarness();
+  test("phase running -> idle notifies with SoundType done once", () => {
+    const agentsList = [];
     const calls = [];
     notify.__setSpawnForTests((args) => { calls.push(args); return {}; });
-    fireEvent(handlers, "assistant/message", { turn: 1, step: 1, message: { role: "assistant", content: [] } });
-    assert.equal(calls.length, 0, "debounced");
-    await new Promise((r) => setTimeout(r, 950));
-    assert.equal(calls.length, 1);
+    agentsList.push(fakeAgent("s1", { kind: "running", turn: 1, step: 1 }));
+    notify.pollAgentPhases(fakeAgentsService(agentsList));
+    assert.equal(calls.length, 0, "running alone does not notify");
+    agentsList[0] = fakeAgent("s1", { kind: "idle", lastTurn: 1 });
+    notify.pollAgentPhases(fakeAgentsService(agentsList));
+    assert.equal(calls.length, 1, "running->idle transition notifies");
     assert.equal(calls[0][calls[0].indexOf("-SoundType") + 1], "done");
+    assert.equal(calls[0][calls[0].indexOf("-Name") + 1], "「My Session」");
     cleanup();
   });
 
-  test("assistant/message followed by step/start stays quiet (intermediate reply)", async () => {
-    const { handlers } = makeHarness();
+  test("same idle state does not re-notify (lastTurn dedupe)", () => {
+    const agentsList = [];
     const calls = [];
     notify.__setSpawnForTests((args) => { calls.push(args); return {}; });
-    fireEvent(handlers, "assistant/message", { turn: 1, step: 1, message: { role: "assistant", content: [] } });
-    // a tool-calling step starts right after: cancel the pending 'done'
-    fireEvent(handlers, "step/start", { turn: 1, step: 2 });
-    await new Promise((r) => setTimeout(r, 950));
-    assert.equal(calls.length, 0);
+    agentsList.push(fakeAgent("s1", { kind: "running", turn: 1, step: 1 }));
+    notify.pollAgentPhases(fakeAgentsService(agentsList));
+    agentsList[0] = fakeAgent("s1", { kind: "idle", lastTurn: 1 });
+    notify.pollAgentPhases(fakeAgentsService(agentsList));
+    agentsList[0] = fakeAgent("s1", { kind: "idle", lastTurn: 1 });
+    notify.pollAgentPhases(fakeAgentsService(agentsList));
+    assert.equal(calls.length, 1, "second idle poll does not re-notify");
     cleanup();
   });
 
@@ -243,13 +269,13 @@ describe("apply() event wiring", () => {
     const { handlers } = makeHarness();
     const calls = [];
     notify.__setSpawnForTests((args) => { calls.push(args); return {}; });
-    fireEvent(handlers, "assistant/message", { turn: 1, step: 1, message: { role: "assistant", content: [] } }, { origin: "subagent" });
     fireEvent(handlers, "tool/call", { name: "ask_user_question" }, { origin: "subagent" });
+    fireEvent(handlers, "approval/asked", { id: "a1", toolName: "write_file" }, { origin: "subagent" });
     assert.equal(calls.length, 0);
     cleanup();
   });
 
-  test("foreground suppresses done/error but ask still fires", () => {
+  test("foreground suppresses done but ask still fires", () => {
     const { handlers, routes } = makeHarness();
     const calls = [];
     notify.__setSpawnForTests((args) => { calls.push(args); return {}; });
@@ -258,7 +284,10 @@ describe("apply() event wiring", () => {
     const req = { method: "POST", headers: { "sec-fetch-site": "same-origin" }, on: (n, fn) => { if (n === "data") fn(Buffer.from('{"page":true}')); if (n === "end") fn(); } };
     const res = { status: 0, body: "", writeHead(s) { this.status = s; }, end(b) { this.body = b; } };
     fg.handler(req, res);
-    fireEvent(handlers, "assistant/message", { turn: 1, step: 1, message: { role: "assistant", content: [] } });
+    const agentsList = [fakeAgent("s1", { kind: "running", turn: 1, step: 1 })];
+    notify.pollAgentPhases(fakeAgentsService(agentsList));
+    agentsList[0] = fakeAgent("s1", { kind: "idle", lastTurn: 1 });
+    notify.pollAgentPhases(fakeAgentsService(agentsList));
     assert.equal(calls.length, 0, "completion-class suppressed in foreground");
     fireEvent(handlers, "tool/call", { name: "ask_user_question" });
     assert.equal(calls.length, 1, "ask fires even in foreground");
