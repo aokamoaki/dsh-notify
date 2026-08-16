@@ -1,0 +1,70 @@
+{
+  "name": "dsh-notify",
+  "version": "1.0.0",
+  "private": false,
+  "type": "module",
+  "description": "Conversation-completion notifications for DeepSeek Harness: Windows toast + sound on turn done / error / goal, plus ask & approval alerts - foreground-suppressed, background-only, with a volume-adjustable bell in the conversation header.",
+  "main": "lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "cordis.patch.yml",
+    "dsh.ico",
+    "README.md",
+    "README.en.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "deepseek",
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "notification",
+    "notify",
+    "toast",
+    "windows"
+  ],
+  "author": "aokamoaki",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aokamoaki/dsh-notify.git"
+  },
+  "homepage": "https://github.com/aokamoaki/dsh-notify#readme",
+  "bugs": {
+    "url": "https://github.com/aokamoaki/dsh-notify/issues"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-ui-conversation"
+      ]
+    }
+  },
+  "scripts": {
+    "check": "node --check lib/index.js && node --check lib/client.js",
+    "test": "node --test",
+    "pack:check": "npm pack --dry-run"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=22.13"
+  }
+}

@@ -1,0 +1,4 @@
+# dsh-notify bundle registration.
+- insert:
+    - id: dsh-notify
+      name: 'dsh-notify'
