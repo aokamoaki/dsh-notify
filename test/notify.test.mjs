@@ -173,23 +173,22 @@ function fireEvent(handlers, type, data, extra = {}) {
 }
 
 describe("apply() event wiring", () => {
-  test("turn/end error notifies immediately with SoundType error", () => {
+  test("agent/error notifies immediately with SoundType error", () => {
     const { handlers } = makeHarness();
     const calls = [];
     notify.__setSpawnForTests((args) => { calls.push(args); return {}; });
-    fireEvent(handlers, "turn/end", { reason: { kind: "error" } });
+    handlers["agent/error"]({ agent: { id: "s1", session: { id: "s1", events: [{ type: "session/title", data: { title: "My Session" } }] } } });
     assert.equal(calls.length, 1);
     assert.equal(calls[0][calls[0].indexOf("-SoundType") + 1], "error");
     assert.equal(calls[0][calls[0].indexOf("-Name") + 1], "「My Session」");
     cleanup();
   });
 
-  test("turn/end completed + idle notifies after the 800ms debounce", async () => {
+  test("assistant/message notifies after the 800ms debounce", async () => {
     const { handlers } = makeHarness();
     const calls = [];
     notify.__setSpawnForTests((args) => { calls.push(args); return {}; });
-    handlers["agent/status"]({ status: "idle" });
-    fireEvent(handlers, "turn/end", { reason: { kind: "completed" } });
+    fireEvent(handlers, "assistant/message", { turn: 1, step: 1, message: { role: "assistant", content: [] } });
     assert.equal(calls.length, 0, "debounced");
     await new Promise((r) => setTimeout(r, 950));
     assert.equal(calls.length, 1);
@@ -197,12 +196,13 @@ describe("apply() event wiring", () => {
     cleanup();
   });
 
-  test("completed while the agent is running stays quiet (no false 'done')", async () => {
+  test("assistant/message followed by step/start stays quiet (intermediate reply)", async () => {
     const { handlers } = makeHarness();
     const calls = [];
     notify.__setSpawnForTests((args) => { calls.push(args); return {}; });
-    handlers["agent/status"]({ status: "running" });
-    fireEvent(handlers, "turn/end", { reason: { kind: "completed" } });
+    fireEvent(handlers, "assistant/message", { turn: 1, step: 1, message: { role: "assistant", content: [] } });
+    // a tool-calling step starts right after: cancel the pending 'done'
+    fireEvent(handlers, "step/start", { turn: 1, step: 2 });
     await new Promise((r) => setTimeout(r, 950));
     assert.equal(calls.length, 0);
     cleanup();
@@ -243,7 +243,7 @@ describe("apply() event wiring", () => {
     const { handlers } = makeHarness();
     const calls = [];
     notify.__setSpawnForTests((args) => { calls.push(args); return {}; });
-    fireEvent(handlers, "turn/end", { reason: { kind: "error" } }, { origin: "subagent" });
+    fireEvent(handlers, "assistant/message", { turn: 1, step: 1, message: { role: "assistant", content: [] } }, { origin: "subagent" });
     fireEvent(handlers, "tool/call", { name: "ask_user_question" }, { origin: "subagent" });
     assert.equal(calls.length, 0);
     cleanup();
@@ -258,7 +258,7 @@ describe("apply() event wiring", () => {
     const req = { method: "POST", headers: { "sec-fetch-site": "same-origin" }, on: (n, fn) => { if (n === "data") fn(Buffer.from('{"page":true}')); if (n === "end") fn(); } };
     const res = { status: 0, body: "", writeHead(s) { this.status = s; }, end(b) { this.body = b; } };
     fg.handler(req, res);
-    fireEvent(handlers, "turn/end", { reason: { kind: "error" } });
+    fireEvent(handlers, "assistant/message", { turn: 1, step: 1, message: { role: "assistant", content: [] } });
     assert.equal(calls.length, 0, "completion-class suppressed in foreground");
     fireEvent(handlers, "tool/call", { name: "ask_user_question" });
     assert.equal(calls.length, 1, "ask fires even in foreground");
@@ -269,8 +269,8 @@ describe("apply() event wiring", () => {
     const { handlers } = makeHarness();
     const calls = [];
     notify.__setSpawnForTests((args) => { calls.push(args); return {}; });
-    fireEvent(handlers, "turn/end", { reason: { kind: "error" } });
-    fireEvent(handlers, "turn/end", { reason: { kind: "error" } });
+    handlers["agent/error"]({ agent: { id: "s1", session: { id: "s1" } } });
+    handlers["agent/error"]({ agent: { id: "s1", session: { id: "s1" } } });
     assert.equal(calls.length, 1);
     cleanup();
   });
