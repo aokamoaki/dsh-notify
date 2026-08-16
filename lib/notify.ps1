@@ -137,8 +137,23 @@ public static class DshNotifyAumid {
         # Chat-app style toast: session name as title, event as
         # source (action center) comes from the AUMID shortcut name, so no
         # attribution text is needed. Whole-card click opens the UI.
+        # activationType='protocol' makes the click launch the dsh-notify://
+        # handler DIRECTLY (the registered desktop app / its second-instance
+        # lock) instead of the AUMID shortcut -> activate.ps1 chain, which
+        # Windows did not actually invoke on click. Use protocol activation
+        # ONLY when the desktop app is installed (it owns the protocol);
+        # otherwise a plain http toast falls back to the default browser,
+        # which is the correct click target for web-only users.
+        $desktopApp = Join-Path $env:LOCALAPPDATA "Programs\dsh-desktop-app\dsh-desktop-app.exe"
+        $hasDesktopApp = (Test-Path $desktopApp)
         $b64 = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($Url)).TrimEnd('=').Replace('+', '-').Replace('/', '_')
-        $launch = 'dsh-notify://open/' + $b64
+        if ($hasDesktopApp) {
+            $launch = 'dsh-notify://open/' + $b64
+            $activationAttr = "activationType='protocol' "
+        } else {
+            $launch = $Url
+            $activationAttr = ""
+        }
         function Esc-Xml([string]$s) { return $s.Replace('&', '&amp;').Replace('<', '&lt;').Replace('>', '&gt;').Replace('"', '&quot;') }
         $nameXml = Esc-Xml $Name
         $detailXml = Esc-Xml $Detail
@@ -148,7 +163,7 @@ public static class DshNotifyAumid {
         $inner = ""
         $inner += "<text hint-maxLines='1'>$nameXml</text>"
         if (-not [string]::IsNullOrEmpty($Detail)) { $inner += "<text hint-maxLines='2'>$detailXml</text>" }
-        $xml.LoadXml("<toast launch='$(Esc-Xml $launch)'><visual><binding template='ToastGeneric'>$inner</binding></visual></toast>")
+        $xml.LoadXml("<toast $activationAttr launch='$(Esc-Xml $launch)'><visual><binding template='ToastGeneric'>$inner</binding></visual></toast>")
         $toast = New-Object Windows.UI.Notifications.ToastNotification -ArgumentList $xml
         if ($Tag) { $toast.Tag = $Tag; $toast.Group = 'dsh-notify' }
         $appId = if (Test-Path $lnkPath) { $AUMID } else { 'dsh-notify' }
