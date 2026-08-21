@@ -53,12 +53,37 @@ describe("config", () => {
 });
 
 describe("isSameOrigin", () => {
+  const loopback = { host: "127.0.0.1:3080" };
+
   test("same-origin / none / missing pass; cross-site rejected", () => {
-    assert.equal(notify.isSameOrigin({ headers: { "sec-fetch-site": "same-origin" } }), true);
-    assert.equal(notify.isSameOrigin({ headers: { "sec-fetch-site": "none" } }), true);
-    assert.equal(notify.isSameOrigin({ headers: {} }), true);
-    assert.equal(notify.isSameOrigin({ headers: { "sec-fetch-site": "cross-site" } }), false);
-    assert.equal(notify.isSameOrigin({ headers: { "sec-fetch-site": "same-site" } }), false);
+    assert.equal(notify.isSameOrigin({ headers: { ...loopback, "sec-fetch-site": "same-origin" } }), true);
+    assert.equal(notify.isSameOrigin({ headers: { ...loopback, "sec-fetch-site": "none" } }), true);
+    assert.equal(notify.isSameOrigin({ headers: { ...loopback } }), true);
+    assert.equal(notify.isSameOrigin({ headers: { ...loopback, "sec-fetch-site": "cross-site" } }), false);
+    assert.equal(notify.isSameOrigin({ headers: { ...loopback, "sec-fetch-site": "same-site" } }), false);
+    cleanup();
+  });
+
+  test("the Host must be ours: a rebinding page sends no sec-fetch-site", () => {
+    // DNS rebinding resolves an attacker hostname to 127.0.0.1 and issues a
+    // same-origin request, so sec-fetch-site alone lets it through. The Host
+    // header still carries the attacker's name.
+    assert.equal(notify.isSameOrigin({ headers: { host: "evil.example" } }), false);
+    assert.equal(notify.isSameOrigin({ headers: { host: "evil.example", "sec-fetch-site": "same-origin" } }), false);
+    assert.equal(notify.isSameOrigin({ headers: {} }), false, "a request without a Host is not ours");
+    cleanup();
+  });
+
+  test("loopback spellings are accepted", () => {
+    assert.equal(notify.isSameOrigin({ headers: { host: "localhost:3080" } }), true);
+    assert.equal(notify.isSameOrigin({ headers: { host: "127.0.0.1" } }), true);
+    assert.equal(notify.isSameOrigin({ headers: { host: "[::1]:3080" } }), true);
+    cleanup();
+  });
+
+  test("a cross-origin Origin is rejected even from a loopback Host", () => {
+    assert.equal(notify.isSameOrigin({ headers: { ...loopback, origin: "http://evil.example" } }), false);
+    assert.equal(notify.isSameOrigin({ headers: { ...loopback, origin: "http://127.0.0.1:3080" } }), true);
     cleanup();
   });
 });
@@ -281,7 +306,7 @@ describe("apply() wiring", () => {
     notify.__setSpawnForTests((args) => { calls.push(args); return {}; });
     // mark foreground via the route
     const fg = routes.find((r) => r.path === "/dsh-notify/foreground");
-    const req = { method: "POST", headers: { "sec-fetch-site": "same-origin" }, on: (n, fn) => { if (n === "data") fn(Buffer.from('{"page":true}')); if (n === "end") fn(); } };
+    const req = { method: "POST", headers: { host: "127.0.0.1:3080", "sec-fetch-site": "same-origin" }, on: (n, fn) => { if (n === "data") fn(Buffer.from('{"page":true}')); if (n === "end") fn(); } };
     const res = { status: 0, body: "", writeHead(s) { this.status = s; }, end(b) { this.body = b; } };
     fg.handler(req, res);
     const agentsList = [fakeAgent("s1", { kind: "running", turn: 1, step: 1 })];
@@ -315,9 +340,12 @@ function routeFor(routes, path) {
 function makeReq(method, headers, body) {
   // Deliver any body synchronously when the handler subscribes, so the async
   // handler completes before `await handler(...)` resolves.
+  //
+  // Every real request carries a Host, and the fence pins it to loopback, so
+  // the default belongs here rather than in each caller.
   return {
     method,
-    headers,
+    headers: { host: "127.0.0.1:3080", ...headers },
     on: (n, fn) => {
       if (body !== undefined && n === "data") fn(Buffer.from(body));
       if (body !== undefined && n === "end") fn();
